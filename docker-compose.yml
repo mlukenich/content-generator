@@ -1,0 +1,77 @@
+# docker-compose.yml
+# Defines the multi-container Docker application for NovaContent.
+#
+# To run: docker-compose up --build -d
+# To scale workers: docker-compose up --scale worker=3
+#
+version: '3.8'
+
+services:
+  # Database Service (PostgreSQL)
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Cache Service (Redis)
+  cache:
+    image: redis:alpine
+    restart: always
+    networks:
+      - internal_network
+
+  # Main Application Service (API + BullBoard UI)
+  app:
+    build: .
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    networks:
+      - internal_network
+    volumes:
+      - ./output:/usr/src/app/output # Mount the output directory for rendered videos
+    env_file:
+      - .env
+    command: bun run src/index.ts # Command to start the main app
+
+  # Background Worker Service
+  worker:
+    build: .
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    networks:
+      - internal_network
+    volumes:
+      - ./output:/usr/src/app/output
+    env_file:
+      - .env
+    command: bun run src/workers/render-worker.ts # Command to start the worker
+
+networks:
+  internal_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
