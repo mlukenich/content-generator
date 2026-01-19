@@ -30,19 +30,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpangocairo-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package.json and bun.lockb
-COPY package.json bun.lockb ./
+# Copy package.json and bun.lock
+COPY package.json bun.lock ./
 
 # Install only production dependencies
 RUN bun install --production
 
 # Copy the rest of the application source code
 COPY . .
-
-# Download the Chromium browser needed by Remotion for rendering.
-# This ensures the browser is present in the image and doesn't need
-# to be downloaded on container startup.
-RUN npx remotion browser ensure
 
 # The default command to start the application (can be overridden in docker-compose)
 CMD ["bun", "run", "src/index.ts"]
