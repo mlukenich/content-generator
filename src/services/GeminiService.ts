@@ -9,8 +9,8 @@ import { NicheConfig } from '../core/types';
 import { VideoScript, VideoScriptSchema } from '../core/schema';
 import { QuotaService } from './QuotaService';
 
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1000;
+const MAX_RETRIES = 10;
+const RETRY_DELAY_MS = 10000;
 const DUMMY_TOPIC = "a surprising fact"; // Generic topic if none is provided
 
 /**
@@ -54,7 +54,18 @@ export class GeminiService {
         - The target audience is: ${niche.targetAudience}
         - The visual style is: ${niche.visualStyle}
         - You must strictly follow the JSON schema provided.
-        - The 'visualPrompt' in each scene should be a detailed instruction for an AI image generator.`;
+        - The 'visualPrompt' in each scene should be a detailed instruction for an AI image generator.
+        
+        Example Output Format:
+        {
+          "title": "My Video",
+          "hook": "Check this out!",
+          "body": "This is the body.",
+          "callToAction": "Follow me.",
+          "scenes": [
+            { "text": "Scene 1 text", "visualPrompt": "Image of scene 1", "durationInSeconds": 5 }
+          ]
+        }`;
         
         const generationConfig: GenerationConfig = {
             responseMimeType: 'application/json',
@@ -62,7 +73,7 @@ export class GeminiService {
         };
 
         const model = this.genAI.getGenerativeModel({
-          model: 'gemini-2.5-pro',
+          model: 'gemini-flash-latest',
           systemInstruction,
           generationConfig
         });
@@ -71,10 +82,21 @@ export class GeminiService {
         const prompt = `Generate a viral video script about ${topic || DUMMY_TOPIC}.`;
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        const responseText = response.text();
+        let responseText = response.text();
+        
+        // Clean markdown code blocks
+        responseText = responseText.replace(/```json\n?|\n?```/g, '').trim();
+
+        // Parse JSON first to clean it up
+        const rawJson = JSON.parse(responseText);
+        
+        // Filter out invalid scenes if they exist
+        if (rawJson.scenes && Array.isArray(rawJson.scenes)) {
+            rawJson.scenes = rawJson.scenes.filter((s: any) => s.text && s.visualPrompt);
+        }
 
         // 4. Validate and Increment Quota
-        const parsedScript = VideoScriptSchema.parse(JSON.parse(responseText));
+        const parsedScript = VideoScriptSchema.parse(rawJson);
         await this.quotaService.incrementUsage();
         
         console.log('Script generated and validated successfully.');
@@ -83,10 +105,23 @@ export class GeminiService {
       } catch (error: any) {
         // 5. Handle Errors and Retry
         if (error.status === 429 && attempt < MAX_RETRIES) {
-          console.warn(`Rate limit exceeded. Retrying in ${RETRY_DELAY_MS / 1000}s...`);
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+          let waitTime = RETRY_DELAY_MS * attempt;
+          
+          // Smart retry: Extract wait time from error message
+          const match = error.message?.match(/Please retry in ([0-9.]+)s/);
+          if (match && match[1]) {
+             waitTime = Math.ceil(parseFloat(match[1]) * 1000) + 1000; // Add 1s buffer
+             console.log(`API requested wait of ${match[1]}s. Waiting ${waitTime}ms...`);
+          } else {
+             // Add jitter to avoid thundering herd
+             const jitter = Math.random() * 2000;
+             waitTime += jitter;
+             console.warn(`Rate limit exceeded. Retrying in ${(waitTime / 1000).toFixed(2)}s...`);
+          }
+
+          await new Promise(resolve => setTimeout(resolve, waitTime));
         } else {
-          console.error('Error generating script from Gemini:', error);
+          console.error('Error generating script from Gemini:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
           throw new Error(`Failed to generate script after ${attempt} attempts.`);
         }
       }

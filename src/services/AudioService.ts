@@ -1,4 +1,4 @@
-import { ElevenLabsClient } from "elevenlabs-node";
+import { ElevenLabsClient } from "elevenlabs";
 import * as mm from 'music-metadata';
 import { promises as fsPromises, createWriteStream } from 'fs';
 import path from 'path';
@@ -9,13 +9,28 @@ const VOICE_CACHE_DIR = path.join(process.cwd(), 'public', 'voiceovers');
 const ELEVENLABS_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Example voice ID
 
 // Helper to write a stream to a file
-const streamToFile = (stream: Readable, path: string): Promise<void> => {
-    return new Promise((resolve, reject) => {
-        const fileStream = createWriteStream(path);
-        stream.pipe(fileStream);
-        stream.on('end', resolve);
-        stream.on('error', reject);
-    });
+const streamToFile = async (stream: any, filePath: string): Promise<void> => {
+    const fileStream = createWriteStream(filePath);
+    
+    try {
+        if (typeof stream.pipe === 'function') {
+             // Node.js Readable stream
+            return new Promise((resolve, reject) => {
+                stream.pipe(fileStream);
+                stream.on('end', resolve);
+                stream.on('error', reject);
+            });
+        } else {
+             // Web Stream / Async Iterable
+            for await (const chunk of stream) {
+                fileStream.write(chunk);
+            }
+            fileStream.end();
+        }
+    } catch (error) {
+        fileStream.destroy();
+        throw error;
+    }
 };
 
 /**
@@ -43,19 +58,35 @@ export class AudioService {
       console.log(`Cache hit for voice-over: ${fileName}`);
     } catch {
       console.log(`Cache miss. Generating new voice-over for: "${text.substring(0, 30)}..."`);
-      try {
-        const audioStream = await this.elevenlabs.textToSpeechStream({
-            text,
-            voiceId,
-            modelId: 'eleven_multilingual_v2',
-        });
+      
+      const MAX_RETRIES = 5;
+      const BASE_DELAY_MS = 2000;
 
-        await streamToFile(audioStream, filePath);
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const audioStream = await this.elevenlabs.textToSpeech.convert(voiceId, {
+              text,
+              model_id: 'eleven_multilingual_v2',
+          });
 
-        console.log(`Successfully generated and cached voice-over: ${fileName}`);
-      } catch (error) {
-        console.error('Error generating audio from ElevenLabs:', error);
-        throw new Error('Failed to generate voice-over.');
+          // The SDK returns a Node.js Readable stream
+          await streamToFile(audioStream as Readable, filePath);
+
+          console.log(`Successfully generated and cached voice-over: ${fileName}`);
+          break; // Success, exit retry loop
+
+        } catch (error: any) {
+           const statusCode = error?.statusCode || error?.status;
+           // Handle Rate Limit (429) or other transient errors if needed
+           if ((statusCode === 429 || statusCode === 401) && attempt < MAX_RETRIES) {
+             const delay = BASE_DELAY_MS * attempt + Math.random() * 1000; // Exponential backoff + jitter
+             console.warn(`ElevenLabs API error ${statusCode}. Retrying in ${Math.round(delay)}ms...`);
+             await new Promise(resolve => setTimeout(resolve, delay));
+           } else {
+             console.error('Error generating audio from ElevenLabs:', error);
+             throw new Error(`Failed to generate voice-over after ${attempt} attempts.`);
+           }
+        }
       }
     }
 

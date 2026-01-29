@@ -5,6 +5,9 @@ import { videos } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { writeFile, unlink } from 'fs/promises';
+import path from 'path';
+import os from 'os';
 
 const execAsync = promisify(exec);
 
@@ -56,8 +59,13 @@ export default async function (job: Job<RenderJob>) {
 
   const compositionId = 'NovaVideo';
   // NOTE: The Remotion entry point could be made configurable.
-  const remotionEntry = 'src/remotion/Root.tsx'; 
-  const command = `npx remotion render ${remotionEntry} ${compositionId} ${outputDestination} --props='${JSON.stringify(renderManifest)}'`;
+  const remotionEntry = 'src/remotion/Root.tsx';
+  
+  // Write props to a temporary file to avoid command-line length limits and escaping issues
+  const propsFilePath = path.join(os.tmpdir(), `render-props-${job.id}.json`);
+  await writeFile(propsFilePath, JSON.stringify(renderManifest));
+
+  const command = `npx remotion render ${remotionEntry} ${compositionId} ${outputDestination} --props="${propsFilePath.replace(/\\/g, '/')}"`;
 
   try {
     // This command can take a long time.
@@ -69,6 +77,13 @@ export default async function (job: Job<RenderJob>) {
   } catch (error) {
     console.error(`[JOB ${job.id}] Failed to execute Remotion CLI:`, error);
     throw new Error('Remotion render failed.');
+  } finally {
+      // Clean up the temporary props file
+      try {
+          await unlink(propsFilePath);
+      } catch (cleanupError) {
+          console.warn(`[JOB ${job.id}] Failed to delete temp props file:`, cleanupError);
+      }
   }
 
   await job.updateProgress(100);

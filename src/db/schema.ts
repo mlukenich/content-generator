@@ -1,4 +1,4 @@
-import { pgTable, serial, text, varchar, timestamp, uniqueIndex, integer, date, json } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, varchar, timestamp, uniqueIndex, integer, date, json, index } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 /**
@@ -53,7 +53,7 @@ export const videos = pgTable('videos', {
   renderManifestJson: json('render_manifest_json'),
 }, (table) => {
   return {
-    nicheIdIndex: uniqueIndex('niche_id_idx').on(table.nicheId),
+    nicheIdIndex: index('niche_id_idx').on(table.nicheId),
   };
 });
 

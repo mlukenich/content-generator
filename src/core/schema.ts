@@ -19,7 +19,7 @@ export const NicheConfigSchema = z.object({
 export const SceneSchema = z.object({
   text: z.string().describe("The spoken text or voiceover for this scene."),
   visualPrompt: z.string().describe("A detailed prompt for an image/video generation model to create the visual for this scene."),
-  durationInSeconds: z.number().positive().describe("The duration of this scene in seconds."),
+  durationInSeconds: z.number().positive().describe("The duration of this scene in seconds.").optional().default(5),
 });
 
 /**
