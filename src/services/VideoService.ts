@@ -4,18 +4,14 @@ import { eq } from 'drizzle-orm';
 import { RenderManifest } from '../core/types';
 import { VideoScript } from '../core/schema';
 import { AudioService } from './AudioService';
+import { logError, logInfo } from '../core/logging';
 
-/**
- * VideoService is responsible for transforming the AI-generated script into a
- * render-ready manifest. It orchestrates asset generation (visuals and audio)
- * and persists the final manifest to the database for the rendering workers.
- */
 export class VideoService {
   private readonly audioService: AudioService;
 
   constructor(audioService: AudioService) {
     this.audioService = audioService;
-    console.log('VideoService initialized with AudioService.');
+    logInfo('VideoService initialized.', { phase: 'video_service_init' });
   }
 
   private getPlaceholderAsset(prompt: string): string {
@@ -23,29 +19,28 @@ export class VideoService {
     return `https://placehold.co/1080x1920/000000/FFFFFF/png?text=${query}`;
   }
 
-  /**
-   * Prepares a render manifest from a video script.
-   * This version generates voice-overs for each scene and uses their actual
-   * duration to define the video timeline.
-   */
   public async prepareRender(script: VideoScript, videoId: number): Promise<RenderManifest> {
-    console.log(`Preparing render manifest for video ID: ${videoId}...`);
+    logInfo('Preparing render manifest.', { phase: 'prepare_render_start', videoId });
 
     try {
-      // 1. Generate all assets in parallel (visual placeholders and audio)
       const processedScenes = await Promise.all(
-        script.scenes.map(async (scene) => {
-          const [audioResult, visualUrl] = await Promise.all([
-            this.audioService.generateVoiceOver(scene.text),
-            this.getPlaceholderAsset(scene.visualPrompt),
-          ]);
+        script.scenes.map(async (scene, index) => {
+          try {
+            const [audioResult, visualUrl] = await Promise.all([
+              this.audioService.generateVoiceOver(scene.text),
+              Promise.resolve(this.getPlaceholderAsset(scene.visualPrompt)),
+            ]);
 
-          return {
-            text: scene.text,
-            assetUrl: visualUrl,
-            audioUrl: audioResult.filePath,
-            durationInSeconds: audioResult.durationInSeconds,
-          };
+            return {
+              text: scene.text,
+              assetUrl: visualUrl,
+              audioUrl: audioResult.filePath,
+              durationInSeconds: audioResult.durationInSeconds,
+            };
+          } catch (sceneError) {
+            const error = sceneError as Error;
+            throw new Error(`Scene ${index + 1} failed: ${error.message}`);
+          }
         })
       );
 
@@ -54,23 +49,20 @@ export class VideoService {
         scenes: processedScenes,
       };
 
-      // 2. Save the manifest and update the video status
-      await db.update(videos)
-        .set({
-          renderManifestJson: manifest,
-          status: 'rendering',
-        })
-        .where(eq(videos.id, videoId));
+      await db.update(videos).set({ renderManifestJson: manifest, status: 'rendering' }).where(eq(videos.id, videoId));
 
-      console.log(`Render manifest for video ID ${videoId} saved to database.`);
-      
+      logInfo('Render manifest saved.', { phase: 'prepare_render_success', videoId, sceneCount: processedScenes.length });
       return manifest;
-
     } catch (error) {
-      console.error(`Error preparing render for video ID ${videoId}:`, error);
-      await db.update(videos)
-        .set({ status: 'error' })
-        .where(eq(videos.id, videoId));
+      const renderError = error as Error;
+      logError('Error preparing render.', {
+        phase: 'prepare_render_error',
+        videoId,
+        errorType: renderError.name,
+        errorMessage: renderError.message,
+        stack: renderError.stack,
+      });
+      await db.update(videos).set({ status: 'error' }).where(eq(videos.id, videoId));
       throw new Error('Failed to prepare render manifest.');
     }
   }

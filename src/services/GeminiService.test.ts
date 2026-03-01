@@ -1,6 +1,6 @@
 import { test, expect, describe, mock, afterEach, beforeAll } from 'bun:test';
-import { GeminiService } from '../GeminiService';
-import { QuotaService } from '../QuotaService';
+import { GeminiService } from './GeminiService';
+import { QuotaService } from './QuotaService';
 import { CRAZY_ANIMAL_FACTS } from '../../config/NicheDefinitions';
 import { VideoScriptSchema } from '../../core/schema';
 

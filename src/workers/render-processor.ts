@@ -5,75 +5,83 @@ import { videos } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { RenderManifestSchema } from '../core/schema';
+import { logError, logInfo } from '../core/logging';
 
 const execAsync = promisify(exec);
 
-/**
- * ==================================================================================
- * RENDER PROCESSOR (Sandboxed)
- * ==================================================================================
- * This is the core logic for the render worker. It runs in a separate, sandboxed
- * process for each job, ensuring isolation and preventing CPU-intensive render
- * tasks from blocking the main application event loop.
- *
- * It simulates a full render pipeline:
- * 1. Fetches render data from the database.
- * 2. Updates progress.
- * 3. Invokes the Remotion CLI to render the video.
- * 4. Returns the path to the final rendered video.
- * ==================================================================================
- */
 export default async function (job: Job<RenderJob>) {
-  const { videoId, outputDestination } = job.data;
-  console.log(`[JOB ${job.id}] Starting render for video ID: ${videoId}`);
+  const startedAt = Date.now();
+  const { videoId, outputDestination, requestId, nicheSlug } = job.data;
 
-  // 1. Fetch the RenderManifest from the database
-  await job.updateProgress(10);
-  console.log(`[JOB ${job.id}] Fetching render manifest...`);
-
-  const videoRecord = await db.query.videos.findFirst({
-    where: eq(videos.id, videoId),
+  logInfo('Render processor started.', {
+    phase: 'processor_start',
+    jobId: job.id,
+    requestId,
+    correlationId: requestId,
+    niche: nicheSlug,
   });
 
+  await job.updateProgress(10);
+  logInfo('Fetching render manifest.', { phase: 'fetch_manifest', jobId: job.id, requestId, correlationId: requestId, niche: nicheSlug });
+
+  const videoRecord = await db.query.videos.findFirst({ where: eq(videos.id, videoId) });
+
   if (!videoRecord || !videoRecord.renderManifestJson) {
-    throw new Error(`[JOB ${job.id}] No video record or render manifest found for ID: ${videoId}`);
+    throw new Error(`No video record or render manifest found for ID: ${videoId}`);
   }
 
-  // The manifest is stored as a JSON object, so we cast it.
-  // In a real app, you might use Zod to validate this.
-  const renderManifest = videoRecord.renderManifestJson as any;
+  const renderManifest = RenderManifestSchema.parse(videoRecord.renderManifestJson);
 
-  // 2. Simulate asset fetching (e.g., downloading from a remote URL)
-  await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   await job.updateProgress(30);
-  console.log(`[JOB ${job.id}] All assets fetched.`);
+  logInfo('Assets fetched.', { phase: 'assets_fetched', jobId: job.id, requestId, correlationId: requestId, niche: nicheSlug });
 
-  // 3. Trigger Remotion render using the CLI
-  // In a real-world scenario, you would use @remotion/lambda for cloud rendering
-  // or a more robust local rendering setup.
-  console.log(`[JOB ${job.id}] Invoking Remotion CLI...`);
+  logInfo('Invoking Remotion CLI.', { phase: 'invoke_remotion', jobId: job.id, requestId, correlationId: requestId, niche: nicheSlug });
   await job.updateProgress(50);
 
   const compositionId = 'NovaVideo';
-  // NOTE: The Remotion entry point could be made configurable.
-  const remotionEntry = 'src/remotion/Root.tsx'; 
+  const remotionEntry = 'src/remotion/Root.tsx';
   const command = `npx remotion render ${remotionEntry} ${compositionId} ${outputDestination} --props='${JSON.stringify(renderManifest)}'`;
 
   try {
-    // This command can take a long time.
     const { stdout, stderr } = await execAsync(command);
-    console.log(`[JOB ${job.id}] Remotion render stdout:`, stdout);
+    logInfo('Remotion render stdout.', { phase: 'remotion_stdout', jobId: job.id, requestId, correlationId: requestId, niche: nicheSlug, stdout });
     if (stderr) {
-      console.error(`[JOB ${job.id}] Remotion render stderr:`, stderr);
+      logError('Remotion render stderr.', {
+        phase: 'remotion_stderr',
+        jobId: job.id,
+        requestId,
+        correlationId: requestId,
+        niche: nicheSlug,
+        errorType: 'RemotionCLIStderr',
+        errorMessage: stderr,
+      });
     }
   } catch (error) {
-    console.error(`[JOB ${job.id}] Failed to execute Remotion CLI:`, error);
+    const renderError = error as Error;
+    logError('Failed to execute Remotion CLI.', {
+      phase: 'remotion_error',
+      jobId: job.id,
+      requestId,
+      correlationId: requestId,
+      niche: nicheSlug,
+      errorType: renderError.name,
+      errorMessage: renderError.message,
+      stack: renderError.stack,
+    });
     throw new Error('Remotion render failed.');
   }
 
   await job.updateProgress(100);
-  console.log(`[JOB ${job.id}] Render completed successfully.`);
+  logInfo('Render completed.', {
+    phase: 'processor_completed',
+    jobId: job.id,
+    requestId,
+    correlationId: requestId,
+    niche: nicheSlug,
+    durationMs: Date.now() - startedAt,
+  });
 
-  // Return the path to the rendered video
   return outputDestination;
-};
+}
