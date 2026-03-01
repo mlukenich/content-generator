@@ -5,7 +5,7 @@ FROM oven/bun:latest
 WORKDIR /usr/src/app
 
 # Install necessary dependencies for Remotion (Puppeteer/Chromium) and FFmpeg
-# This is the most critical part for ensuring Remotion can render videos headless.
+# This is critical for headless rendering.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libnss3 \
@@ -30,19 +30,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpangocairo-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package.json and bun.lockb
-COPY package.json bun.lockb ./
+# Copy package manifests
+COPY package.json package-lock.json ./
 
-# Install only production dependencies
-RUN bun install --production
+# Install production dependencies using npm lockfile for deterministic installs
+RUN npm ci --omit=dev
 
 # Copy the rest of the application source code
 COPY . .
 
 # Download the Chromium browser needed by Remotion for rendering.
-# This ensures the browser is present in the image and doesn't need
-# to be downloaded on container startup.
 RUN npx remotion browser ensure
 
-# The default command to start the application (can be overridden in docker-compose)
+# Default command (overridden by docker-compose service commands)
 CMD ["bun", "run", "src/index.ts"]
