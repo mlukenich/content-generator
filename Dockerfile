@@ -40,7 +40,8 @@ RUN bun install --production
 COPY . .
 
 # Download the Chromium browser needed by Remotion for rendering.
-RUN npx remotion browser ensure
+# Use bunx because the oven/bun base image does not include npx.
+RUN bunx remotion browser ensure
 
 # Default command (overridden by docker-compose service commands)
 CMD ["bun", "run", "src/index.ts"]
