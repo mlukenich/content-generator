@@ -58,7 +58,7 @@ Once you have completed the setup steps, you can run the application using Docke
 
 ## 5. Testing AI Content Generation
 
-Now that the application is running, you can test the AI content generation features. The application is designed to automatically generate content for a "niche" on a schedule. For testing purposes, we can manually trigger the content generation process.
+Now that the application is running, you can test the AI content generation features. The application is designed to automatically generate content for a "niche" on a schedule. For testing purposes, we can manually trigger the render enqueue process.
 
 1.  **Access the BullMQ Dashboard:**
 
@@ -66,17 +66,32 @@ Now that the application is running, you can test the AI content generation feat
 
 2.  **Trigger the Content Generation Job:**
 
-    The `index.ts` file contains a simple Express server that exposes a `/trigger` endpoint for manually triggering the content generation for a niche.
+    The API exposes a `/trigger` endpoint for manually enqueueing a render job for a niche.
 
-    Open your web browser or use a tool like `curl` to send a GET request to `http://localhost:3000/trigger?niche=science`. This will add a new job to the `content-generation` queue.
+    Open your web browser or use a tool like `curl` to send a GET request to `http://localhost:3000/trigger?niche=science`. This will add a new job to the `RenderQueue` queue.
 
     ```bash
-    curl "http://localhost:3000/trigger?niche=science"
+    curl "http://localhost:3000/trigger?niche=science" # alias for crazy-animal-facts
     ```
+
+
+
+### API health checks
+
+You can also verify liveness/readiness:
+
+```bash
+curl "http://localhost:3000/health"
+curl "http://localhost:3000/ready"
+```
+
+Expected behavior:
+- `/health`: process is running
+- `/ready`: dependencies (queue/redis) are reachable
 
 3.  **Monitor the Job in BullMQ Dashboard:**
 
-    Go back to the BullMQ Dashboard. You should see a new job in the `content-generation` queue. The `render-worker` will pick up this job and start processing it.
+    Go back to the BullMQ Dashboard. You should see a new job in the `RenderQueue` queue. The `render-worker` will pick up this job and start processing it.
 
 4.  **Check the Logs:**
 

@@ -1,5 +1,5 @@
 import { test, expect, describe, mock, afterEach } from 'bun:test';
-import { QuotaService } from '../QuotaService';
+import { QuotaService } from './QuotaService';
 import { db } from '../../db/connection';
 
 /**

@@ -1,4 +1,3 @@
-
 /**
  * Defines the configuration for a content niche. This object drives the AI's content
  * generation process, ensuring that all output is tailored to a specific theme,
@@ -29,13 +28,13 @@ export interface VideoMetadata {
  * resolved asset URLs, and scene timings.
  */
 export interface RenderManifest {
-    title: string;
-    scenes: {
-        text: string;
-        assetUrl: string;
-        audioUrl: string;
-        durationInSeconds: number;
-    }[];
+  title: string;
+  scenes: {
+    text: string;
+    assetUrl: string;
+    audioUrl: string;
+    durationInSeconds: number;
+  }[];
 }
 
 /**
@@ -44,9 +43,12 @@ export interface RenderManifest {
  * execute a video render.
  */
 export interface RenderJob {
-    videoId: number;
-    // The nicheConfig is included to provide context, though the manifest
-    // is the primary source of truth for the render itself.
-    nicheConfig: NicheConfig;
-    outputDestination: string;
+  videoId: number;
+  requestId: string;
+  nicheSlug: string;
+  logicalRequestId: string;
+  // The nicheConfig is included to provide context, though the manifest
+  // is the primary source of truth for the render itself.
+  nicheConfig: NicheConfig;
+  outputDestination: string;
 }

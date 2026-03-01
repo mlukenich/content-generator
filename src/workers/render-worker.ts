@@ -6,70 +6,115 @@ import { db } from '../db/connection';
 import { videos } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { RenderJob } from '../core/types';
+import { logError, logInfo } from '../core/logging';
+import { validateRuntimeEnv } from '../config/env';
 
-/**
- * ==================================================================================
- * RENDER WORKER INITIALIZATION
- * ==================================================================================
- * This file initializes the BullMQ Worker, which is responsible for processing
- * jobs from the 'RenderQueue'.
- *
- * - Sandboxed Process: It points to the 'render-processor.ts' file, which will
- *   be executed in a separate, sandboxed process for each job.
- * - Concurrency: The number of concurrent jobs is set to the number of available
- *   CPU cores, optimizing resource usage.
- * - Event Listeners: It listens for 'completed' and 'failed' events to update
- *   the video's status in the PostgreSQL database.
- * ==================================================================================
- */
+validateRuntimeEnv('worker');
 
 const QUEUE_NAME = 'RenderQueue';
 const processorPath = path.join(__dirname, 'render-processor.ts');
 
 export const renderWorker = new Worker<RenderJob>(QUEUE_NAME, processorPath, {
   connection,
-  concurrency: os.cpus().length, // Process one job per core
+  concurrency: os.cpus().length,
   removeOnComplete: { count: 1000 },
   removeOnFail: { count: 5000 },
-  runInBand: process.env.NODE_ENV === "test", // Run jobs in-process for testing
+  runInBand: process.env.NODE_ENV === 'test',
 });
 
-console.log(`Render worker started. Concurrency: ${os.cpus().length}`);
+logInfo('Render worker started.', { phase: 'worker_startup', concurrency: os.cpus().length });
 
-// --- EVENT LISTENERS ---
+renderWorker.on('active', (job) => {
+  logInfo('Job dequeued and active.', {
+    phase: 'dequeue',
+    jobId: job.id,
+    requestId: job.data.requestId,
+    correlationId: job.data.requestId,
+    niche: job.data.nicheSlug,
+  });
+});
 
 renderWorker.on('completed', async (job: Job<RenderJob>, result: string) => {
-  console.log(`[JOB ${job.id}] COMPLETED. Result: ${result}`);
-  // Update the video record in the database with the final video URL and 'published' status
+  logInfo('Job completed.', {
+    phase: 'job_completed',
+    jobId: job.id,
+    requestId: job.data.requestId,
+    correlationId: job.data.requestId,
+    niche: job.data.nicheSlug,
+    result,
+  });
+
   try {
     await db
       .update(videos)
       .set({
-        status: 'published', // Or 'ready_to_publish'
-        videoUrl: result, // The return value from the processor is the file path
+        status: 'published',
+        videoUrl: result,
         publishedAt: new Date(),
       })
       .where(eq(videos.id, job.data.videoId));
-    console.log(`[JOB ${job.id}] Database updated to 'published' for video ID: ${job.data.videoId}`);
+
+    logInfo('Database updated to published.', {
+      phase: 'db_update',
+      jobId: job.id,
+      requestId: job.data.requestId,
+      correlationId: job.data.requestId,
+      niche: job.data.nicheSlug,
+    });
   } catch (error) {
-    console.error(`[JOB ${job.id}] FAILED to update database on completion:`, error);
+    const dbError = error as Error;
+    logError('Failed to update DB on completion.', {
+      phase: 'db_update_error',
+      jobId: job.id,
+      requestId: job.data.requestId,
+      correlationId: job.data.requestId,
+      niche: job.data.nicheSlug,
+      errorType: dbError.name,
+      errorMessage: dbError.message,
+      stack: dbError.stack,
+    });
   }
 });
 
 renderWorker.on('failed', async (job, error) => {
-  console.error(`[JOB ${job?.id}] FAILED. Error: ${error.message}`);
-  if (job) {
-    // If the job has failed all its attempts, mark it as 'error' in the database
-    if (job.attemptsMade >= job.opts.attempts!) {
-        try {
-            await db
-              .update(videos)
-              .set({ status: 'error' })
-              .where(eq(videos.id, job.data.videoId));
-            console.log(`[JOB ${job.id}] Database updated to 'error' for video ID: ${job.data.videoId}`);
-        } catch (dbError) {
-            console.error(`[JOB ${job.id}] FAILED to update database on final failure:`, dbError);
-        }
+  const attemptsAllowed = job?.opts.attempts ?? 1;
+  const attemptsMade = job?.attemptsMade ?? 0;
+
+  logError('Job failed.', {
+    phase: 'job_failed',
+    jobId: job?.id,
+    requestId: job?.data.requestId,
+    correlationId: job?.data.requestId,
+    niche: job?.data.nicheSlug,
+    errorType: error.name,
+    errorMessage: error.message,
+    stack: error.stack,
+    attemptsMade,
+    attemptsAllowed,
+  });
+
+  if (job && attemptsMade >= attemptsAllowed) {
+    try {
+      await db.update(videos).set({ status: 'error' }).where(eq(videos.id, job.data.videoId));
+      logInfo('Database updated to error after terminal failure.', {
+        phase: 'db_update_terminal_error',
+        jobId: job.id,
+        requestId: job.data.requestId,
+        correlationId: job.data.requestId,
+        niche: job.data.nicheSlug,
+      });
+    } catch (dbError) {
+      const terminalDbError = dbError as Error;
+      logError('Failed to update DB after terminal failure.', {
+        phase: 'db_update_terminal_error_failed',
+        jobId: job.id,
+        requestId: job.data.requestId,
+        correlationId: job.data.requestId,
+        niche: job.data.nicheSlug,
+        errorType: terminalDbError.name,
+        errorMessage: terminalDbError.message,
+        stack: terminalDbError.stack,
+      });
     }
   }
 });
