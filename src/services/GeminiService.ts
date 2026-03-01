@@ -1,23 +1,38 @@
-import {
-  GoogleGenerativeAI,
-  GenerationConfig,
-  SafetySetting,
-  HarmCategory,
-  HarmBlockThreshold,
-} from '@google/generative-ai';
+import { GoogleGenerativeAI, GenerationConfig } from '@google/generative-ai';
 import { NicheConfig } from '../core/types';
 import { VideoScript, VideoScriptSchema } from '../core/schema';
 import { QuotaService } from './QuotaService';
+import { logError, logInfo, logWarn } from '../core/logging';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
-const DUMMY_TOPIC = "a surprising fact"; // Generic topic if none is provided
+const REQUEST_TIMEOUT_MS = 30_000;
+const DUMMY_TOPIC = 'a surprising fact';
 
-/**
- * GeminiService interacts with the Google Generative AI to generate video
- * scripts. It enforces a strict JSON output, manages API quotas, and includes
- * retry logic for rate limit errors.
- */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`Gemini request timeout after ${timeoutMs}ms.`)), timeoutMs);
+    promise
+      .then((result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+  });
+}
+
+function sanitizeJsonResponse(text: string): string {
+  const trimmed = text.trim();
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch) {
+    return fencedMatch[1].trim();
+  }
+  return trimmed;
+}
+
 export class GeminiService {
   private readonly genAI: GoogleGenerativeAI;
   private readonly quotaService: QuotaService;
@@ -25,73 +40,91 @@ export class GeminiService {
   constructor(apiKey: string, quotaService: QuotaService) {
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.quotaService = quotaService;
-    console.log('GeminiService initialized with Quota Management.');
+    logInfo('GeminiService initialized.', { phase: 'gemini_init' });
   }
 
-  /**
-   * Public method to generate content. It wraps the core logic with a retry mechanism.
-   */
   public async generateContent(niche: NicheConfig, topic?: string): Promise<VideoScript> {
     return this.generateContentWithRetry(niche, topic);
   }
 
-  /**
-   * Generates a video script with a retry mechanism for handling rate limits.
-   */
   private async generateContentWithRetry(niche: NicheConfig, topic?: string): Promise<VideoScript> {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const startedAt = Date.now();
       try {
-        // 1. Check Quota
         if (!(await this.quotaService.canMakeRequest())) {
           throw new Error('Daily API quota exceeded.');
         }
 
-        console.log(`Generating script for niche "${niche.name}" (Attempt ${attempt})...`);
+        logInfo('Generating script via Gemini.', {
+          phase: 'script_generation',
+          niche: niche.name,
+          attempt,
+        });
 
-        // 2. Configure Model
         const systemInstruction = `You are a viral video scriptwriter. Your task is to generate a complete script for a short-form video.
         - Your persona and tone must be: ${niche.tone}
         - The target audience is: ${niche.targetAudience}
         - The visual style is: ${niche.visualStyle}
         - You must strictly follow the JSON schema provided.
         - The 'visualPrompt' in each scene should be a detailed instruction for an AI image generator.`;
-        
+
         const generationConfig: GenerationConfig = {
-            responseMimeType: 'application/json',
-            temperature: 1.0,
+          responseMimeType: 'application/json',
+          temperature: 1.0,
         };
 
         const model = this.genAI.getGenerativeModel({
           model: 'gemini-2.5-pro',
           systemInstruction,
-          generationConfig
+          generationConfig,
         });
 
-        // 3. Generate Content
         const prompt = `Generate a viral video script about ${topic || DUMMY_TOPIC}.`;
-        const result = await model.generateContent(prompt);
+        const result = await withTimeout(model.generateContent(prompt), REQUEST_TIMEOUT_MS);
         const response = await result.response;
-        const responseText = response.text();
+        const responseText = sanitizeJsonResponse(response.text());
 
-        // 4. Validate and Increment Quota
         const parsedScript = VideoScriptSchema.parse(JSON.parse(responseText));
         await this.quotaService.incrementUsage();
-        
-        console.log('Script generated and validated successfully.');
-        return parsedScript;
 
+        logInfo('Script generated and validated.', {
+          phase: 'script_generation_success',
+          niche: niche.name,
+          attempt,
+          durationMs: Date.now() - startedAt,
+        });
+
+        return parsedScript;
       } catch (error: any) {
-        // 5. Handle Errors and Retry
-        if (error.status === 429 && attempt < MAX_RETRIES) {
-          console.warn(`Rate limit exceeded. Retrying in ${RETRY_DELAY_MS / 1000}s...`);
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * attempt));
-        } else {
-          console.error('Error generating script from Gemini:', error);
-          throw new Error(`Failed to generate script after ${attempt} attempts.`);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const isRateLimit = error?.status === 429;
+
+        if (isRateLimit && attempt < MAX_RETRIES) {
+          logWarn('Gemini rate limited; retrying.', {
+            phase: 'script_generation_retry',
+            niche: niche.name,
+            attempt,
+            errorType: 'RateLimit',
+            errorMessage,
+            durationMs: Date.now() - startedAt,
+          });
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+          continue;
         }
+
+        logError('Error generating script from Gemini.', {
+          phase: 'script_generation_error',
+          niche: niche.name,
+          attempt,
+          errorType: error?.name || 'GeminiError',
+          errorMessage,
+          stack: error?.stack,
+          durationMs: Date.now() - startedAt,
+        });
+        throw new Error(`Failed to generate script after ${attempt} attempts.`);
       }
     }
-    // This line should theoretically be unreachable
+
     throw new Error('Exited retry loop without success or error.');
   }
 }
