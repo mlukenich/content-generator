@@ -64,6 +64,11 @@ To get started with NovaContent, you will need to have Docker and Docker Compose
 
     The main application is accessible at `http://localhost:3000`.
 
+Operational endpoints:
+- `GET /health` for liveness
+- `GET /ready` for dependency readiness
+- `GET /trigger?niche=science` to enqueue a render request
+
 ## 5. Project Structure
 
 The project is organized into the following directories:

@@ -17,9 +17,9 @@ export const NicheConfigSchema = z.object({
  * and a specific duration.
  */
 export const SceneSchema = z.object({
-  text: z.string().describe("The spoken text or voiceover for this scene."),
-  visualPrompt: z.string().describe("A detailed prompt for an image/video generation model to create the visual for this scene."),
-  durationInSeconds: z.number().positive().describe("The duration of this scene in seconds."),
+  text: z.string().describe('The spoken text or voiceover for this scene.'),
+  visualPrompt: z.string().describe('A detailed prompt for an image/video generation model to create the visual for this scene.'),
+  durationInSeconds: z.number().positive().describe('The duration of this scene in seconds.'),
 });
 
 /**
@@ -28,11 +28,35 @@ export const SceneSchema = z.object({
  * and ready for the video rendering engine.
  */
 export const VideoScriptSchema = z.object({
-  title: z.string().describe("A catchy, viral-style title for the video."),
+  title: z.string().describe('A catchy, viral-style title for the video.'),
   hook: z.string().describe("A short, engaging hook to capture the viewer's attention in the first 3 seconds."),
-  body: z.string().describe("The main content of the video script, delivered after the hook."),
+  body: z.string().describe('The main content of the video script, delivered after the hook.'),
   callToAction: z.string().describe("A call to action at the end of the video (e.g., 'Follow for more!')."),
-  scenes: z.array(SceneSchema).min(1).describe("An array of scenes that make up the video."),
+  scenes: z.array(SceneSchema).min(1).describe('An array of scenes that make up the video.'),
+});
+
+export const RenderManifestSchema = z.object({
+  title: z.string().min(1),
+  scenes: z
+    .array(
+      z.object({
+        text: z.string().min(1),
+        assetUrl: z.string().min(1),
+        audioUrl: z.string().min(1),
+        durationInSeconds: z.number().positive(),
+      })
+    )
+    .min(1),
+});
+
+export const ApiErrorSchema = z.object({
+  success: z.literal(false),
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    requestId: z.string().optional(),
+    details: z.unknown().optional(),
+  }),
 });
 
 // Infer the TypeScript type from the Zod schema
