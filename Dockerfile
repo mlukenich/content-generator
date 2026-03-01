@@ -31,10 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package manifests
-COPY package.json package-lock.json ./
+COPY package.json ./
 
-# Install production dependencies using npm lockfile for deterministic installs
-RUN npm ci --omit=dev
+# Install production dependencies with Bun (oven/bun image does not include npm)
+RUN bun install --production
 
 # Copy the rest of the application source code
 COPY . .
