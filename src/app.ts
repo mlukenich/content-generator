@@ -30,9 +30,9 @@ function getRequestId(req: Request): string {
   return crypto.randomUUID();
 }
 
-function buildLogicalRequestId(nicheSlug: string): string {
+function buildLogicalRequestId(nicheSlug: string, videoId: number): string {
   const dayPartition = new Date().toISOString().slice(0, 10);
-  return `${nicheSlug}:${dayPartition}`;
+  return `${nicheSlug}-${dayPartition}-${videoId}`;
 }
 
 function findNicheByInput(inputNiche: string) {
@@ -88,7 +88,8 @@ export function createApp({ queueService = new QueueService(), queueForBoard }: 
   app.get('/ready', async (_req: Request, res: Response) => {
     try {
       if (queueForBoard) {
-        await queueForBoard.client.ping();
+        const client = await queueForBoard.client;
+        await client.ping();
       }
       res.status(200).json({ success: true, status: 'ready' });
     } catch (error) {
@@ -138,7 +139,7 @@ export function createApp({ queueService = new QueueService(), queueForBoard }: 
     }
 
     const videoId = Date.now();
-    const logicalRequestId = buildLogicalRequestId(resolved.resolvedSlug);
+    const logicalRequestId = buildLogicalRequestId(resolved.resolvedSlug, videoId);
     const outputDestination = `output/${resolved.resolvedSlug}-${videoId}.mp4`;
 
     logInfo('Trigger accepted for enqueue.', {

@@ -5,7 +5,6 @@ FROM oven/bun:latest
 WORKDIR /usr/src/app
 
 # Install necessary dependencies for Remotion (Puppeteer/Chromium) and FFmpeg
-# This is critical for headless rendering.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libnss3 \
@@ -33,15 +32,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy package manifests
 COPY package.json ./
 
-# Install production dependencies with Bun (oven/bun image does not include npm)
-RUN bun install --production
+# Install dependencies with Bun
+RUN bun install
 
 # Copy the rest of the application source code
 COPY . .
 
-# Download the Chromium browser needed by Remotion for rendering.
-# Use bunx because the oven/bun base image does not include npx.
-RUN bunx remotion browser ensure
-
-# Default command (overridden by docker-compose service commands)
+# Default command
 CMD ["bun", "run", "src/index.ts"]

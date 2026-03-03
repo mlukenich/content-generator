@@ -7,12 +7,16 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { RenderManifestSchema } from '../core/schema';
 import { logError, logInfo } from '../core/logging';
+import { GeminiService } from '../services/GeminiService';
+import { QuotaService } from '../services/QuotaService';
+import { AudioService } from '../services/AudioService';
+import { VideoService } from '../services/VideoService';
 
 const execAsync = promisify(exec);
 
 export default async function (job: Job<RenderJob>) {
   const startedAt = Date.now();
-  const { videoId, outputDestination, requestId, nicheSlug } = job.data;
+  const { videoId, outputDestination, requestId, nicheSlug, nicheConfig } = job.data;
 
   logInfo('Render processor started.', {
     phase: 'processor_start',
@@ -25,13 +29,24 @@ export default async function (job: Job<RenderJob>) {
   await job.updateProgress(10);
   logInfo('Fetching render manifest.', { phase: 'fetch_manifest', jobId: job.id, requestId, correlationId: requestId, niche: nicheSlug });
 
-  const videoRecord = await db.query.videos.findFirst({ where: eq(videos.id, videoId) });
+  let renderManifest;
 
-  if (!videoRecord || !videoRecord.renderManifestJson) {
-    throw new Error(`No video record or render manifest found for ID: ${videoId}`);
+  if (process.env.SKIP_DB === 'true') {
+    logInfo('SKIP_DB is true, generating manifest on the fly.', { phase: 'skip_db_manifest_gen', jobId: job.id });
+    const geminiService = new GeminiService(process.env.GEMINI_API_KEY || '', new QuotaService());
+    const audioService = new AudioService(process.env.ELEVENLABS_API_KEY || '');
+    const videoService = new VideoService(audioService);
+
+    const script = await geminiService.generateContent(nicheConfig);
+    renderManifest = await videoService.prepareRender(script, videoId);
+  } else {
+    const videoRecord = await db.query.videos.findFirst({ where: eq(videos.id, videoId) });
+
+    if (!videoRecord || !videoRecord.renderManifestJson) {
+      throw new Error(`No video record or render manifest found for ID: ${videoId}`);
+    }
+    renderManifest = RenderManifestSchema.parse(videoRecord.renderManifestJson);
   }
-
-  const renderManifest = RenderManifestSchema.parse(videoRecord.renderManifestJson);
 
   await new Promise((resolve) => setTimeout(resolve, 1000));
   await job.updateProgress(30);
@@ -42,7 +57,8 @@ export default async function (job: Job<RenderJob>) {
 
   const compositionId = 'NovaVideo';
   const remotionEntry = 'src/remotion/Root.tsx';
-  const command = `npx remotion render ${remotionEntry} ${compositionId} ${outputDestination} --props='${JSON.stringify(renderManifest)}'`;
+  // Use json stringify for props to avoid shell escaping issues
+  const command = `bun x remotion render ${remotionEntry} ${compositionId} ${outputDestination} --props='${JSON.stringify(renderManifest)}'`;
 
   try {
     const { stdout, stderr } = await execAsync(command);

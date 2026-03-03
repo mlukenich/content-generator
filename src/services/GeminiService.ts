@@ -44,6 +44,16 @@ export class GeminiService {
   }
 
   public async generateContent(niche: NicheConfig, topic?: string): Promise<VideoScript> {
+    if (process.env.SKIP_AI === 'true') {
+        logInfo('SKIP_AI is true, using mock content.', { phase: 'gemini_mock', niche: niche.name });
+        return {
+            title: `Mock Video for ${niche.name}`,
+            scenes: [
+                { text: "This is a mock scene 1", visualPrompt: "Cinematic shot of a lion" },
+                { text: "This is a mock scene 2", visualPrompt: "Golden eagle flying over mountains" }
+            ]
+        };
+    }
     return this.generateContentWithRetry(niche, topic);
   }
 

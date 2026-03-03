@@ -49,7 +49,9 @@ export class VideoService {
         scenes: processedScenes,
       };
 
-      await db.update(videos).set({ renderManifestJson: manifest, status: 'rendering' }).where(eq(videos.id, videoId));
+      if (process.env.SKIP_DB !== 'true') {
+        await db.update(videos).set({ renderManifestJson: manifest, status: 'rendering' }).where(eq(videos.id, videoId));
+      }
 
       logInfo('Render manifest saved.', { phase: 'prepare_render_success', videoId, sceneCount: processedScenes.length });
       return manifest;
@@ -62,7 +64,9 @@ export class VideoService {
         errorMessage: renderError.message,
         stack: renderError.stack,
       });
-      await db.update(videos).set({ status: 'error' }).where(eq(videos.id, videoId));
+      if (process.env.SKIP_DB !== 'true') {
+        await db.update(videos).set({ status: 'error' }).where(eq(videos.id, videoId));
+      }
       throw new Error('Failed to prepare render manifest.');
     }
   }

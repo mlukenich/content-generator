@@ -45,22 +45,26 @@ renderWorker.on('completed', async (job: Job<RenderJob>, result: string) => {
   });
 
   try {
-    await db
-      .update(videos)
-      .set({
-        status: 'published',
-        videoUrl: result,
-        publishedAt: new Date(),
-      })
-      .where(eq(videos.id, job.data.videoId));
+    if (process.env.SKIP_DB !== 'true') {
+      await db
+        .update(videos)
+        .set({
+          status: 'published',
+          videoUrl: result,
+          publishedAt: new Date(),
+        })
+        .where(eq(videos.id, job.data.videoId));
 
-    logInfo('Database updated to published.', {
-      phase: 'db_update',
-      jobId: job.id,
-      requestId: job.data.requestId,
-      correlationId: job.data.requestId,
-      niche: job.data.nicheSlug,
-    });
+      logInfo('Database updated to published.', {
+        phase: 'db_update',
+        jobId: job.id,
+        requestId: job.data.requestId,
+        correlationId: job.data.requestId,
+        niche: job.data.nicheSlug,
+      });
+    } else {
+      logInfo('SKIP_DB is true, skipping DB update to published.', { phase: 'db_update_skipped', jobId: job.id });
+    }
   } catch (error) {
     const dbError = error as Error;
     logError('Failed to update DB on completion.', {
@@ -95,14 +99,18 @@ renderWorker.on('failed', async (job, error) => {
 
   if (job && attemptsMade >= attemptsAllowed) {
     try {
-      await db.update(videos).set({ status: 'error' }).where(eq(videos.id, job.data.videoId));
-      logInfo('Database updated to error after terminal failure.', {
-        phase: 'db_update_terminal_error',
-        jobId: job.id,
-        requestId: job.data.requestId,
-        correlationId: job.data.requestId,
-        niche: job.data.nicheSlug,
-      });
+      if (process.env.SKIP_DB !== 'true') {
+        await db.update(videos).set({ status: 'error' }).where(eq(videos.id, job.data.videoId));
+        logInfo('Database updated to error after terminal failure.', {
+          phase: 'db_update_terminal_error',
+          jobId: job.id,
+          requestId: job.data.requestId,
+          correlationId: job.data.requestId,
+          niche: job.data.nicheSlug,
+        });
+      } else {
+        logInfo('SKIP_DB is true, skipping DB update to error.', { phase: 'db_update_terminal_error_skipped', jobId: job.id });
+      }
     } catch (dbError) {
       const terminalDbError = dbError as Error;
       logError('Failed to update DB after terminal failure.', {
