@@ -6,11 +6,14 @@ import { ExpressAdapter } from '@bull-board/express';
 import type { Queue } from 'bullmq';
 import { availableNiches } from './config/NicheDefinitions';
 import { QueueService } from './services/QueueService';
+import { VideoOrchestrator } from './services/VideoOrchestrator';
+import { PlatformAuthService, SupportedPlatform } from './services/PlatformAuthService';
 import { RenderJob } from './core/types';
 import { logError, logInfo } from './core/logging';
 
 interface AppDependencies {
-  queueService?: Pick<QueueService, 'enqueue'>;
+  orchestrator?: VideoOrchestrator;
+  authService?: PlatformAuthService;
   queueForBoard?: Queue<RenderJob>;
 }
 
@@ -62,7 +65,11 @@ function sendError(
   });
 }
 
-export function createApp({ queueService = new QueueService(), queueForBoard }: AppDependencies = {}) {
+export function createApp({ 
+  orchestrator = new VideoOrchestrator(), 
+  authService = new PlatformAuthService(),
+  queueForBoard 
+}: AppDependencies = {}) {
   const app = express();
 
   if (queueForBoard) {
@@ -106,9 +113,11 @@ export function createApp({ queueService = new QueueService(), queueForBoard }: 
   app.get('/trigger', async (req: Request, res: Response) => {
     const requestId = getRequestId(req);
     const start = Date.now();
-    const niche = req.query.niche;
+    const niche = req.query.niche as string;
+    const topic = req.query.topic as string;
+    const platform = req.query.publish as any;
 
-    if (typeof niche !== 'string' || niche.trim().length === 0) {
+    if (!niche || niche.trim().length === 0) {
       return sendError(
         res,
         400,
@@ -138,54 +147,74 @@ export function createApp({ queueService = new QueueService(), queueForBoard }: 
       );
     }
 
-    const videoId = Date.now();
-    const logicalRequestId = buildLogicalRequestId(resolved.resolvedSlug, videoId);
-    const outputDestination = `output/${resolved.resolvedSlug}-${videoId}.mp4`;
-
-    logInfo('Trigger accepted for enqueue.', {
-      phase: 'trigger_received',
-      requestId,
-      correlationId: requestId,
-      niche: resolved.resolvedSlug,
-      logicalRequestId,
-    });
-
     try {
-      const job = await queueService.enqueue({
+      const result = await orchestrator.triggerGeneration({
         requestId,
-        logicalRequestId,
-        videoId,
-        nicheSlug: resolved.resolvedSlug,
         nicheConfig: resolved.matchedNiche,
-        outputDestination,
+        topic,
+        publishPlatform: platform,
       });
 
       return res.status(202).json({
         success: true,
-        message: 'Render job enqueued.',
+        message: result.isDuplicate ? 'Duplicate request found. Returning existing job.' : 'Render job enqueued.',
         data: {
           requestId,
-          jobId: String(job.id),
-          videoId,
+          jobId: String(result.jobId),
+          videoId: result.videoId,
           requestedNiche: niche,
           resolvedNiche: resolved.resolvedSlug,
-          logicalRequestId,
-          outputDestination,
+          logicalRequestId: result.logicalRequestId,
+          isDuplicate: result.isDuplicate,
           durationMs: Date.now() - start,
         },
       });
-    } catch (error) {
-      const queueError = error as Error;
-      logError('Trigger enqueue failed.', {
-        phase: 'trigger_enqueue_error',
+    } catch (error: any) {
+      logError('Trigger orchestration failed.', {
+        phase: 'trigger_orchestration_error',
         requestId,
-        correlationId: requestId,
         niche: resolved.resolvedSlug,
         durationMs: Date.now() - start,
-        errorType: queueError.name,
-        errorMessage: queueError.message,
+        errorType: error.name || 'OrchestrationError',
+        errorMessage: error.message,
       });
-      return sendError(res, 500, 'QUEUE_ENQUEUE_FAILED', queueError.message || 'Unknown queue error.', requestId);
+      return sendError(res, 500, 'ORCHESTRATION_FAILED', error.message || 'Unknown orchestration error.', requestId);
+    }
+  });
+
+  // --- NEW: Platform Auth Routes ---
+
+  /**
+   * GET /auth/connect?platform=youtube
+   * Redirects the user to the platform's OAuth2 consent screen.
+   */
+  app.get('/auth/connect', (req: Request, res: Response) => {
+    const platform = req.query.platform as SupportedPlatform;
+    if (!platform) return res.status(400).send('Platform required.');
+
+    try {
+      const url = authService.getAuthUrl(platform);
+      res.redirect(url);
+    } catch (error: any) {
+      res.status(500).send(error.message);
+    }
+  });
+
+  /**
+   * GET /auth/callback?platform=youtube&code=...
+   * Handles the redirect from the social platform after login.
+   */
+  app.get('/auth/callback', async (req: Request, res: Response) => {
+    const platform = req.query.platform as SupportedPlatform;
+    const code = req.query.code as string;
+
+    if (!platform || !code) return res.status(400).send('Platform and code required.');
+
+    try {
+      await authService.handleCallback(platform, code);
+      res.send(`Successfully connected ${platform}! You can now close this window.`);
+    } catch (error: any) {
+      res.status(500).send(`Failed to connect: ${error.message}`);
     }
   });
 

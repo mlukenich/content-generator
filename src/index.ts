@@ -1,14 +1,12 @@
 import { renderQueue } from './core/queue';
 import { createApp } from './app';
-import { validateRuntimeEnv } from './config/env';
+import { env } from './config/env-config';
 import { logInfo } from './core/logging';
 
-validateRuntimeEnv('app');
-
 const app = createApp({ queueForBoard: renderQueue });
-const port = process.env.PORT || 3000;
+const port = env.PORT;
 
 app.listen(port, () => {
-  logInfo('Server started.', { phase: 'startup', port: Number(port) });
-  logInfo('Bull-Board available.', { phase: 'startup', path: '/admin/queues', port: Number(port) });
+  logInfo('Server started.', { phase: 'startup', port });
+  logInfo('Bull-Board available.', { phase: 'startup', path: '/admin/queues', port });
 });

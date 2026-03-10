@@ -1,13 +1,15 @@
 import { afterAll, describe, expect, mock, test } from 'bun:test';
 import type { Server } from 'http';
 import { createApp } from './app';
+import { VideoOrchestrator } from './services/VideoOrchestrator';
 
-async function startTestServer(queueEnqueueImpl: (jobData: any) => Promise<{ id: string }>) {
-  const enqueueMock = mock(queueEnqueueImpl);
+async function startTestServer(triggerGenerationImpl: (params: any) => Promise<any>) {
+  const orchestratorMock = {
+    triggerGeneration: mock(triggerGenerationImpl),
+  } as unknown as VideoOrchestrator;
+
   const app = createApp({
-    queueService: {
-      enqueue: enqueueMock,
-    },
+    orchestrator: orchestratorMock,
   });
 
   const server = await new Promise<Server>((resolve) => {
@@ -20,7 +22,7 @@ async function startTestServer(queueEnqueueImpl: (jobData: any) => Promise<{ id:
   }
 
   return {
-    enqueueMock,
+    orchestratorMock,
     server,
     baseUrl: `http://127.0.0.1:${address.port}`,
   };
@@ -58,7 +60,13 @@ describe('createApp routes', () => {
   });
 
   test('returns 202 and enqueues a job for niche=science alias', async () => {
-    const { enqueueMock, server, baseUrl } = await startTestServer(async () => ({ id: 'job-123' }));
+    const { orchestratorMock, server, baseUrl } = await startTestServer(async () => ({
+      success: true,
+      jobId: 'job-123',
+      videoId: 999,
+      logicalRequestId: 'crazy-animal-facts-daily-2026-03-10',
+      isDuplicate: false,
+    }));
     serversToClose.push(server);
 
     const response = await fetch(`${baseUrl}/trigger?niche=science`, {
@@ -71,31 +79,23 @@ describe('createApp routes', () => {
     expect(body.data.jobId).toBe('job-123');
     expect(body.data.requestId).toBe('req-abc');
     expect(body.data.resolvedNiche).toBe('crazy-animal-facts');
-    expect(body.data.logicalRequestId).toContain('crazy-animal-facts:');
-    expect(body.data.outputDestination).toStartWith('output/crazy-animal-facts-');
+    expect(body.data.logicalRequestId).toContain('crazy-animal-facts');
 
-    expect(enqueueMock).toHaveBeenCalledTimes(1);
-    const [jobData] = enqueueMock.mock.calls[0] as [
+    expect(orchestratorMock.triggerGeneration).toHaveBeenCalledTimes(1);
+    const [params] = (orchestratorMock.triggerGeneration as any).mock.calls[0] as [
       {
-        videoId: number;
-        outputDestination: string;
-        nicheSlug: string;
         requestId: string;
-        logicalRequestId: string;
         nicheConfig: { name: string };
+        topic?: string;
       },
     ];
 
-    expect(jobData.videoId).toBeTypeOf('number');
-    expect(jobData.requestId).toBe('req-abc');
-    expect(jobData.nicheSlug).toBe('crazy-animal-facts');
-    expect(jobData.nicheConfig.name).toBe('Crazy Animal Facts');
-    expect(jobData.logicalRequestId).toContain('crazy-animal-facts:');
-    expect(jobData.outputDestination).toStartWith('output/crazy-animal-facts-');
+    expect(params.requestId).toBe('req-abc');
+    expect(params.nicheConfig.name).toBe('Crazy Animal Facts');
   });
 
   test('returns 400 when niche query is missing', async () => {
-    const { enqueueMock, server, baseUrl } = await startTestServer(async () => ({ id: 'job-ignored' }));
+    const { orchestratorMock, server, baseUrl } = await startTestServer(async () => ({}));
     serversToClose.push(server);
 
     const response = await fetch(`${baseUrl}/trigger`, { headers: { 'x-request-id': 'req-missing' } });
@@ -106,11 +106,11 @@ describe('createApp routes', () => {
     expect(body.error.code).toBe('INVALID_NICHE');
     expect(body.error.requestId).toBe('req-missing');
     expect(body.error.details.allowedNiches).toContain('crazy-animal-facts');
-    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(orchestratorMock.triggerGeneration).not.toHaveBeenCalled();
   });
 
   test('returns 400 for unsupported niche', async () => {
-    const { enqueueMock, server, baseUrl } = await startTestServer(async () => ({ id: 'job-ignored' }));
+    const { orchestratorMock, server, baseUrl } = await startTestServer(async () => ({}));
     serversToClose.push(server);
 
     const response = await fetch(`${baseUrl}/trigger?niche=invalid`);
@@ -120,11 +120,11 @@ describe('createApp routes', () => {
     expect(body.success).toBe(false);
     expect(body.error.code).toBe('UNSUPPORTED_NICHE');
     expect(body.error.requestId).toBeString();
-    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(orchestratorMock.triggerGeneration).not.toHaveBeenCalled();
   });
 
   test('returns 500 when queue enqueue throws', async () => {
-    const { enqueueMock, server, baseUrl } = await startTestServer(async () => {
+    const { orchestratorMock, server, baseUrl } = await startTestServer(async () => {
       throw new Error('Queue offline');
     });
     serversToClose.push(server);
@@ -134,8 +134,8 @@ describe('createApp routes', () => {
 
     expect(response.status).toBe(500);
     expect(body.success).toBe(false);
-    expect(body.error.code).toBe('QUEUE_ENQUEUE_FAILED');
+    expect(body.error.code).toBe('ORCHESTRATION_FAILED');
     expect(body.error.message).toContain('Queue offline');
-    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    expect(orchestratorMock.triggerGeneration).toHaveBeenCalledTimes(1);
   });
 });

@@ -51,4 +51,5 @@ export interface RenderJob {
   // is the primary source of truth for the render itself.
   nicheConfig: NicheConfig;
   outputDestination: string;
+  publishPlatform?: 'youtube' | 'tiktok' | 'outstand';
 }

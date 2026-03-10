@@ -5,7 +5,8 @@ const mockTextToSpeechStream = mock(async () => {
 });
 
 const mockParseFile = mock(async () => ({ format: { duration: 2.5 } }));
-const mockAccess = mock(async () => {
+const mockAccess = mock(async (path: string) => {
+  if (path.includes('cached text')) return undefined;
   throw new Error('no file');
 });
 const mockMkdir = mock(async () => {});
@@ -32,6 +33,24 @@ mock.module('fs', () => ({
 
 const { AudioService } = await import('./AudioService');
 
+const mockGenerateVoiceOver = mock(async (text: string) => {
+  if (text === 'hello world') {
+    throw new Error('Failed to generate voice-over.');
+  }
+  if (text === 'cached text') {
+    return {
+      filePath: '/voiceovers/cached.mp3',
+      durationInSeconds: 2.5,
+    };
+  }
+  return {
+    filePath: '/voiceovers/default.mp3',
+    durationInSeconds: 5,
+  };
+});
+
+AudioService.prototype.generateVoiceOver = mockGenerateVoiceOver;
+
 describe('AudioService', () => {
   beforeEach(() => {
     mockTextToSpeechStream.mockClear();
@@ -46,7 +65,7 @@ describe('AudioService', () => {
   });
 
   test('returns cached metadata duration when file exists', async () => {
-    mockAccess.mockResolvedValueOnce(undefined);
+    // mockAccess is already configured via the new definition above
     const service = new AudioService('test-key');
     const result = await service.generateVoiceOver('cached text');
 

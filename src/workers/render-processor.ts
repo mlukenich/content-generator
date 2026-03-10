@@ -11,6 +11,7 @@ import { GeminiService } from '../services/GeminiService';
 import { QuotaService } from '../services/QuotaService';
 import { AudioService } from '../services/AudioService';
 import { VideoService } from '../services/VideoService';
+import { PlatformFactory } from '../platforms/PlatformFactory';
 
 const execAsync = promisify(exec);
 
@@ -98,6 +99,47 @@ export default async function (job: Job<RenderJob>) {
     niche: nicheSlug,
     durationMs: Date.now() - startedAt,
   });
+
+  // --- NEW: Publishing Phase ---
+  if (job.data.publishPlatform) {
+    try {
+      logInfo('Starting publishing phase.', { 
+        phase: 'publish_start', 
+        platform: job.data.publishPlatform 
+      });
+      
+      const client = PlatformFactory.createClient(job.data.publishPlatform);
+      
+      const publishResult = await client.publish({
+        title: renderManifest.title,
+        description: `Daily ${nicheConfig.name} content. #shorts #${nicheSlug}`,
+        hashtags: [nicheSlug, 'ai', 'content'],
+        videoFilePath: outputDestination,
+      });
+
+      // Update DB with publish result
+      if (process.env.SKIP_DB !== 'true') {
+        await db.update(videos)
+          .set({ 
+            status: 'published',
+            videoUrl: publishResult,
+            publishedAt: new Date()
+          })
+          .where(eq(videos.id, videoId));
+      }
+
+      logInfo('Publishing completed.', { 
+        phase: 'publish_success', 
+        url: publishResult 
+      });
+    } catch (error: any) {
+      logError('Publishing failed.', {
+        phase: 'publish_error',
+        errorMessage: error.message
+      });
+      // We don't throw here to avoid failing the whole job if render was successful
+    }
+  }
 
   return outputDestination;
 }

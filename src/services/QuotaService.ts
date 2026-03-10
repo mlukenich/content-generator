@@ -10,6 +10,8 @@ const DAILY_QUOTA_LIMIT = 1500;
  * the daily request count.
  */
 export class QuotaService {
+  constructor(private database = db) {}
+
   private getToday(): string {
     return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   }
@@ -23,12 +25,12 @@ export class QuotaService {
   public async canMakeRequest(): Promise<boolean> {
     const today = this.getToday();
     
-    const record = await db.query.geminiApiUsage.findFirst({
+    const record = await this.database.query.geminiApiUsage.findFirst({
       where: eq(geminiApiUsage.date, today),
     });
 
     const currentCount = record ? record.requestCount : 0;
-    
+
     if (currentCount < DAILY_QUOTA_LIMIT) {
       console.log(`Quota check passed: ${currentCount} / ${DAILY_QUOTA_LIMIT}`);
       return true;
@@ -46,7 +48,7 @@ export class QuotaService {
   public async incrementUsage(): Promise<void> {
     const today = this.getToday();
 
-    await db.insert(geminiApiUsage)
+    await this.database.insert(geminiApiUsage)
       .values({ date: today, requestCount: 1 })
       .onConflictDoUpdate({
         target: geminiApiUsage.date,

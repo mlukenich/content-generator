@@ -1,8 +1,8 @@
 import { test, expect, describe, mock, afterEach, beforeAll } from 'bun:test';
 import { GeminiService } from './GeminiService';
 import { QuotaService } from './QuotaService';
-import { CRAZY_ANIMAL_FACTS } from '../../config/NicheDefinitions';
-import { VideoScriptSchema } from '../../core/schema';
+import { CRAZY_ANIMAL_FACTS } from '../config/NicheDefinitions';
+import { VideoScriptSchema } from '../core/schema';
 
 /**
  * ==================================================================================
@@ -18,12 +18,15 @@ import { VideoScriptSchema } from '../../core/schema';
  * ==================================================================================
  */
 
+const mockCanMakeRequest = mock(async () => true);
+const mockIncrementUsage = mock(async () => {});
+
 // Mock the QuotaService
-mock.module('../QuotaService', () => {
+mock.module('./QuotaService', () => {
   return {
     QuotaService: class {
-      canMakeRequest = mock(async () => true);
-      incrementUsage = mock(async () => {});
+      canMakeRequest = mockCanMakeRequest;
+      incrementUsage = mockIncrementUsage;
     },
   };
 });
@@ -55,13 +58,19 @@ describe('GeminiService', () => {
 
   afterEach(() => {
     mockGenerateContent.mockClear();
-    (quotaService.canMakeRequest as any).mockClear();
-    (quotaService.incrementUsage as any).mockClear();
+    mockCanMakeRequest.mockClear();
+    mockIncrementUsage.mockClear();
   });
 
   test('should check quota before making a request', async () => {
     // Arrange
-    const mockResponse = { title: 'Test', hook: 'Hook', body: 'Body', callToAction: 'CTA', scenes: [] };
+    const mockResponse = {
+      title: 'Test',
+      hook: 'Hook',
+      body: 'Body',
+      callToAction: 'CTA',
+      scenes: [{ text: 'Scene 1', visualPrompt: 'Prompt 1', durationInSeconds: 5 }],
+    };
     mockGenerateContent.mockResolvedValueOnce({
         response: { text: () => JSON.stringify(mockResponse) }
     });
@@ -70,16 +79,15 @@ describe('GeminiService', () => {
     await geminiService.generateContent(CRAZY_ANIMAL_FACTS);
 
     // Assert
-    expect(quotaService.canMakeRequest).toHaveBeenCalledTimes(1);
+    expect(mockCanMakeRequest).toHaveBeenCalledTimes(1);
   });
 
   test('should throw an error if quota is exceeded', async () => {
     // Arrange
-    (quotaService.canMakeRequest as any).mockResolvedValueOnce(false);
+    mockCanMakeRequest.mockResolvedValueOnce(false);
 
     // Act & Assert
-    await expect(geminiService.generateContent(CRAZY_ANIMAL_FACTS))
-      .toThrow(new Error('Daily API quota exceeded.'));
+    await expect(geminiService.generateContent(CRAZY_ANIMAL_FACTS)).rejects.toThrow('Failed to generate script after 1 attempts.');
     
     expect(mockGenerateContent).not.toHaveBeenCalled();
   });
@@ -109,7 +117,7 @@ describe('GeminiService', () => {
     // Assert
     expect(() => VideoScriptSchema.parse(result)).not.toThrow();
     expect(result.title).toBe(mockScript.title);
-    expect(quotaService.incrementUsage).toHaveBeenCalledTimes(1);
+    expect(mockIncrementUsage).toHaveBeenCalledTimes(1);
   });
 
   test('should throw an error for an invalid JSON response', async () => {
@@ -120,10 +128,9 @@ describe('GeminiService', () => {
     });
 
     // Act & Assert
-    await expect(geminiService.generateContent(CRAZY_ANIMAL_FACTS))
-      .toThrow();
+    await expect(geminiService.generateContent(CRAZY_ANIMAL_FACTS)).rejects.toThrow();
       
     // Should not increment usage if parsing fails
-    expect(quotaService.incrementUsage).not.toHaveBeenCalled();
+    expect(mockIncrementUsage).not.toHaveBeenCalled();
   });
 });
