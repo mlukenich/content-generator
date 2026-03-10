@@ -53,6 +53,7 @@ export const videos = pgTable('videos', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
   platformAccountId: integer('platform_account_id').references(() => platformAccounts.id),
+  estimatedCostCents: integer('estimated_cost_cents').default(0).notNull(),
   // JSON columns
   scriptJson: json('script_json'),
   renderManifestJson: json('render_manifest_json'),

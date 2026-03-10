@@ -4,23 +4,24 @@ import { eq } from 'drizzle-orm';
 import { RenderManifest } from '../core/types';
 import { VideoScript } from '../core/schema';
 import { AudioService } from './AudioService';
+import { AssetSearchService } from './AssetSearchService';
 import { logError, logInfo } from '../core/logging';
 
 export class VideoService {
   private readonly audioService: AudioService;
+  private readonly assetService: AssetSearchService;
 
-  constructor(audioService: AudioService) {
+  constructor(
+    audioService: AudioService, 
+    assetService: AssetSearchService = new AssetSearchService()
+  ) {
     this.audioService = audioService;
+    this.assetService = assetService;
     logInfo('VideoService initialized.', { phase: 'video_service_init' });
   }
 
-  private getPlaceholderAsset(prompt: string): string {
-    const query = encodeURIComponent(prompt.split(' ').slice(0, 5).join(' '));
-    return `https://placehold.co/1080x1920/000000/FFFFFF/png?text=${query}`;
-  }
-
   public async prepareRender(script: VideoScript, videoId: number): Promise<RenderManifest> {
-    logInfo('Preparing render manifest.', { phase: 'prepare_render_start', videoId });
+    logInfo('Preparing render manifest with asset alignment.', { phase: 'prepare_render_start', videoId });
 
     try {
       const processedScenes = await Promise.all(
@@ -28,7 +29,7 @@ export class VideoService {
           try {
             const [audioResult, visualUrl] = await Promise.all([
               this.audioService.generateVoiceOver(scene.text),
-              Promise.resolve(this.getPlaceholderAsset(scene.visualPrompt)),
+              this.assetService.findAsset(scene.visualPrompt),
             ]);
 
             return {

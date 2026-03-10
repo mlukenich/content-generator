@@ -3,6 +3,7 @@ import { platformAccounts } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { logInfo, logError } from '../core/logging';
 import { env } from '../config/env-config';
+import { encrypt, decrypt } from '../core/encryption';
 
 export type SupportedPlatform = 'youtube' | 'tiktok';
 
@@ -50,12 +51,12 @@ export class PlatformAuthService {
       const mockRefreshToken = `refresh_${Math.random().toString(36).substring(7)}`;
       const expiresAt = new Date(Date.now() + 3600 * 1000); // 1 hour from now
 
-      // 2. Persist to DB (Upsert)
+      // 2. Persist to DB (Upsert) with Encryption
       await db.insert(platformAccounts)
         .values({
           platform,
-          accessToken: mockAccessToken,
-          refreshToken: mockRefreshToken,
+          accessToken: encrypt(mockAccessToken),
+          refreshToken: mockRefreshToken ? encrypt(mockRefreshToken) : null,
           expiresAt,
           externalAccountId: 'primary-account', // In real life, fetch profile info first
           accountName: `Main ${platform} Account`,
@@ -63,8 +64,8 @@ export class PlatformAuthService {
         .onConflictDoUpdate({
           target: [platformAccounts.platform, platformAccounts.externalAccountId],
           set: {
-            accessToken: mockAccessToken,
-            refreshToken: mockRefreshToken,
+            accessToken: encrypt(mockAccessToken),
+            refreshToken: mockRefreshToken ? encrypt(mockRefreshToken) : null,
             expiresAt,
             updatedAt: new Date(),
           }
@@ -101,10 +102,10 @@ export class PlatformAuthService {
     
     if (isExpired && account.refreshToken) {
       logInfo('Token expired, refreshing...', { phase: 'auth_refresh', platform });
-      // In real life, perform refresh flow here
-      return account.accessToken; // Mock
+      // In real life, perform refresh flow here using decrypt(account.refreshToken)
+      return decrypt(account.accessToken); // Mock
     }
 
-    return account.accessToken;
+    return decrypt(account.accessToken);
   }
 }

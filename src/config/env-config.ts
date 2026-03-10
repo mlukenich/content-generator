@@ -29,6 +29,9 @@ const envSchema = z.object({
   // Feature Flags
   SKIP_AI: z.coerce.boolean().default(false),
   DEBUG_MODE: z.coerce.boolean().default(false),
+  
+  // Security
+  ENCRYPTION_KEY: z.string().min(32, "Encryption key must be at least 32 characters long").default('default_secure_key_for_dev_32_chars'),
 });
 
 export type Env = z.infer<typeof envSchema>;

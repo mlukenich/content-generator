@@ -6,7 +6,9 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "test": "bun test",
-    "remotion": "remotion"
+    "remotion": "remotion",
+    "db:generate": "drizzle-kit generate:pg",
+    "db:push": "drizzle-kit push:pg"
   },
   "dependencies": {
     "@google/generative-ai": "^0.1.0",

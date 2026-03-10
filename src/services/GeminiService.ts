@@ -2,6 +2,7 @@ import { GoogleGenerativeAI, GenerationConfig } from '@google/generative-ai';
 import { NicheConfig } from '../core/types';
 import { VideoScript, VideoScriptSchema } from '../core/schema';
 import { QuotaService } from './QuotaService';
+import { PromptTemplateService } from './PromptTemplateService';
 import { logError, logInfo, logWarn } from '../core/logging';
 
 const MAX_RETRIES = 3;
@@ -36,10 +37,16 @@ function sanitizeJsonResponse(text: string): string {
 export class GeminiService {
   private readonly genAI: GoogleGenerativeAI;
   private readonly quotaService: QuotaService;
+  private readonly promptService: PromptTemplateService;
 
-  constructor(apiKey: string, quotaService: QuotaService) {
+  constructor(
+    apiKey: string, 
+    quotaService: QuotaService, 
+    promptService: PromptTemplateService = new PromptTemplateService()
+  ) {
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.quotaService = quotaService;
+    this.promptService = promptService;
     logInfo('GeminiService initialized.', { phase: 'gemini_init' });
   }
 
@@ -71,12 +78,7 @@ export class GeminiService {
           attempt,
         });
 
-        const systemInstruction = `You are a viral video scriptwriter. Your task is to generate a complete script for a short-form video.
-        - Your persona and tone must be: ${niche.tone}
-        - The target audience is: ${niche.targetAudience}
-        - The visual style is: ${niche.visualStyle}
-        - You must strictly follow the JSON schema provided.
-        - The 'visualPrompt' in each scene should be a detailed instruction for an AI image generator.`;
+        const systemInstruction = this.promptService.getSystemInstruction(niche);
 
         const generationConfig: GenerationConfig = {
           responseMimeType: 'application/json',
@@ -84,12 +86,12 @@ export class GeminiService {
         };
 
         const model = this.genAI.getGenerativeModel({
-          model: 'gemini-2.5-pro',
+          model: 'gemini-2.0-flash', // Updated to 2.0 Flash for cost/speed
           systemInstruction,
           generationConfig,
         });
 
-        const prompt = `Generate a viral video script about ${topic || DUMMY_TOPIC}.`;
+        const prompt = this.promptService.getUserPrompt(topic || DUMMY_TOPIC);
         const result = await withTimeout(model.generateContent(prompt), REQUEST_TIMEOUT_MS);
         const response = await result.response;
         const responseText = sanitizeJsonResponse(response.text());

@@ -100,6 +100,25 @@ export default async function (job: Job<RenderJob>) {
     durationMs: Date.now() - startedAt,
   });
 
+  // Calculate estimated cost (e.g., 1 cent per 10 seconds of audio + 0.1 for text)
+  // This is a simple mock calculation for business unit economics
+  const totalDuration = renderManifest?.scenes?.reduce((acc: number, scene: any) => acc + (scene.durationInSeconds || 0), 0) || 0;
+  const estimatedCostCents = Math.ceil((totalDuration / 10) * 1) + 1; // Base cost 1 cent + 1 cent per 10s
+
+  if (process.env.SKIP_DB !== 'true') {
+    try {
+      await db.update(videos)
+        .set({ 
+          status: 'completed',
+          estimatedCostCents,
+          updatedAt: new Date()
+        })
+        .where(eq(videos.id, videoId));
+    } catch (e: any) {
+      logError('Failed to update cost/status.', { errorMessage: e.message });
+    }
+  }
+
   // --- NEW: Publishing Phase ---
   if (job.data.publishPlatform) {
     try {

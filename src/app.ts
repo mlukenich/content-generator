@@ -8,12 +8,17 @@ import { availableNiches } from './config/NicheDefinitions';
 import { QueueService } from './services/QueueService';
 import { VideoOrchestrator } from './services/VideoOrchestrator';
 import { PlatformAuthService, SupportedPlatform } from './services/PlatformAuthService';
+import { DashboardService } from './services/DashboardService';
+import { renderDashboard } from './services/DashboardUI';
+import { SchedulerService } from './services/SchedulerService';
 import { RenderJob } from './core/types';
 import { logError, logInfo } from './core/logging';
 
 interface AppDependencies {
   orchestrator?: VideoOrchestrator;
   authService?: PlatformAuthService;
+  dashboardService?: DashboardService;
+  schedulerService?: SchedulerService;
   queueForBoard?: Queue<RenderJob>;
 }
 
@@ -68,6 +73,8 @@ function sendError(
 export function createApp({ 
   orchestrator = new VideoOrchestrator(), 
   authService = new PlatformAuthService(),
+  dashboardService = new DashboardService(),
+  schedulerService = new SchedulerService(),
   queueForBoard 
 }: AppDependencies = {}) {
   const app = express();
@@ -215,6 +222,36 @@ export function createApp({
       res.send(`Successfully connected ${platform}! You can now close this window.`);
     } catch (error: any) {
       res.status(500).send(`Failed to connect: ${error.message}`);
+    }
+  });
+
+  /**
+   * GET /admin/dashboard
+   * Serves the Factory Monitor UI.
+   */
+  app.get('/admin/dashboard', async (req: Request, res: Response) => {
+    try {
+      const stats = await dashboardService.getStats();
+      const html = renderDashboard(stats);
+      res.send(html);
+    } catch (error: any) {
+      res.status(500).send(`Dashboard Error: ${error.message}`);
+    }
+  });
+
+  /**
+   * POST /admin/schedule
+   * Schedules a daily trigger for a niche.
+   */
+  app.post('/admin/schedule', express.json(), async (req: Request, res: Response) => {
+    const { nicheSlug, hour } = req.body;
+    if (!nicheSlug) return res.status(400).send('nicheSlug required.');
+
+    try {
+      await schedulerService.scheduleDaily(nicheSlug, hour || 18);
+      res.status(201).json({ success: true, message: `Scheduled ${nicheSlug} for daily production.` });
+    } catch (error: any) {
+      res.status(500).send(error.message);
     }
   });
 
